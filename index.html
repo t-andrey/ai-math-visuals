@@ -12,9 +12,10 @@
         }
         
         body {
-            background: #000;
+            background: radial-gradient(circle at top, #101323 0%, #040409 55%, #000 100%);
             overflow: hidden;
-            font-family: Arial, sans-serif;
+            font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+            color: #e7ecff;
         }
         
         #gallery {
@@ -28,41 +29,111 @@
         }
         
         .curve-cell {
-            background: #111;
-            border: 1px solid #333;
+            background: linear-gradient(135deg, rgba(20, 24, 40, 0.85), rgba(5, 6, 12, 0.95));
+            border: 1px solid rgba(120, 140, 255, 0.08);
             position: relative;
             overflow: hidden;
             cursor: pointer;
             transition: transform 0.2s ease, border-color 0.2s ease;
+            touch-action: none;
         }
-        
+
         .curve-cell:hover {
             transform: scale(1.05);
-            border-color: #fff;
+            border-color: rgba(180, 220, 255, 0.45);
             z-index: 100;
         }
-        
+
+        .curve-cell.is-holding {
+            border-color: rgba(255, 204, 120, 0.6);
+            box-shadow: 0 0 18px rgba(255, 186, 90, 0.3);
+        }
+
         .curve-canvas {
             width: 100%;
             height: 100%;
             display: block;
         }
-        
+
         .curve-info {
             position: absolute;
             bottom: 0;
             left: 0;
             right: 0;
-            background: rgba(0, 0, 0, 0.7);
-            color: white;
+            background: linear-gradient(180deg, rgba(3, 5, 12, 0), rgba(8, 10, 18, 0.85));
+            color: #dbe6ff;
             font-size: 10px;
-            padding: 2px 4px;
+            padding: 4px 6px;
             opacity: 0;
             transition: opacity 0.2s ease;
+            pointer-events: none;
         }
-        
+
         .curve-cell:hover .curve-info {
             opacity: 1;
+        }
+
+        .curve-info strong {
+            display: block;
+            font-size: 11px;
+            letter-spacing: 0.4px;
+        }
+
+        .curve-info em {
+            display: block;
+            font-style: normal;
+            color: rgba(201, 213, 255, 0.7);
+            margin-top: 2px;
+        }
+
+        .curve-info span {
+            display: block;
+            margin-top: 2px;
+            color: rgba(205, 215, 255, 0.52);
+        }
+
+        .curve-tooltip {
+            position: fixed;
+            top: 0;
+            left: 0;
+            transform: translate(-50%, -130%);
+            background: rgba(6, 8, 15, 0.92);
+            color: #f0f4ff;
+            padding: 8px 10px;
+            border-radius: 8px;
+            box-shadow: 0 10px 24px rgba(8, 10, 22, 0.65);
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.15s ease, transform 0.2s ease;
+            max-width: 240px;
+            font-size: 12px;
+            line-height: 1.35;
+            z-index: 1000;
+            border: 1px solid rgba(120, 140, 255, 0.18);
+        }
+
+        .curve-tooltip.visible {
+            opacity: 1;
+            transform: translate(-50%, -140%);
+        }
+
+        .curve-tooltip strong {
+            display: block;
+            font-size: 13px;
+            margin-bottom: 2px;
+            letter-spacing: 0.3px;
+        }
+
+        .curve-tooltip em {
+            display: block;
+            font-style: normal;
+            color: rgba(193, 207, 255, 0.75);
+            margin-bottom: 4px;
+        }
+
+        .curve-tooltip span {
+            display: block;
+            color: rgba(210, 220, 255, 0.85);
         }
     </style>
 </head>
