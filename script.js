@@ -6,6 +6,16 @@ class ParametricCurveGallery {
         this.startTime = null;
         this.lastFrameTime = null;
         this.resizeTimeout = null;
+
+        this.steps = 420;
+        this.paddingRatio = 0.12;
+
+        this.positiveKeys = new Set(['amplitude', 'a', 'b', 'R', 'r', 'd', 'n', 'f1', 'f2', 'f3', 'f4', 'd1', 'd2', 'd3', 'd4']);
+        this.angleKeys = new Set(['delta', 'p1', 'p2', 'p3', 'p4']);
+        this.smallRangeKeys = new Set(['d1', 'd2', 'd3', 'd4']);
+        this.arrayPositiveKeys = new Set(['freqs']);
+        this.arrayAngleKeys = new Set(['phases']);
+
         this.init();
     }
 
@@ -22,11 +32,8 @@ class ParametricCurveGallery {
         this.gallery.innerHTML = '';
         this.curves = [];
 
-        const cellArea = 150 * 150;
-        const cellCount = Math.floor((window.innerWidth * window.innerHeight) / cellArea);
-        const targetCount = Math.min(Math.max(cellCount, 80), 320);
-
-        for (let i = 0; i < targetCount; i++) {
+        const totalCells = 16 * 9;
+        for (let i = 0; i < totalCells; i++) {
             this.createCurveCell();
         }
     }
@@ -37,8 +44,6 @@ class ParametricCurveGallery {
 
         const canvas = document.createElement('canvas');
         canvas.className = 'curve-canvas';
-        canvas.width = 150;
-        canvas.height = 150;
 
         const info = document.createElement('div');
         info.className = 'curve-info';
@@ -47,19 +52,43 @@ class ParametricCurveGallery {
         cell.appendChild(info);
         this.gallery.appendChild(cell);
 
+        const ctx = canvas.getContext('2d');
         const baseCurve = this.generateRandomCurve();
-        const preparedCurve = this.prepareCurve(baseCurve);
+        const modifiers = this.createDynamicModifiers(baseCurve);
 
         const curve = {
+            cell,
             canvas,
-            ctx: canvas.getContext('2d'),
+            ctx,
             info,
-            ...baseCurve,
-            ...preparedCurve
+            baseCurve,
+            modifiers,
+            points: Array.from({ length: this.steps + 1 }, () => ({ x: 0, y: 0 })),
+            baseHue: this.random(0, 360),
+            hueSpeed: this.random(15, 35),
+            lineWidthBase: this.random(0.6, 1.3),
+            lineWidthVariation: this.random(0.15, 0.5),
+            lineWidthSpeed: this.random(0.4, 1.4),
+            lineWidthPhase: this.random(0, Math.PI * 2)
         };
 
         this.curves.push(curve);
         info.textContent = baseCurve.name;
+
+        this.adjustCanvasSize(curve);
+        requestAnimationFrame(() => this.adjustCanvasSize(curve));
+    }
+
+    adjustCanvasSize(curve) {
+        const { canvas } = curve;
+        const rect = canvas.getBoundingClientRect();
+        const width = Math.max(Math.floor(rect.width), 1);
+        const height = Math.max(Math.floor(rect.height), 1);
+
+        if (canvas.width !== width || canvas.height !== height) {
+            canvas.width = width;
+            canvas.height = height;
+        }
     }
 
     generateRandomCurve() {
@@ -219,6 +248,116 @@ class ParametricCurveGallery {
         }
     }
 
+    createDynamicModifiers(baseCurve) {
+        const modifiers = {};
+
+        for (const [key, value] of Object.entries(baseCurve)) {
+            if (key === 'period' || key === 'name' || key === 'type') {
+                continue;
+            }
+
+            if (typeof value === 'number') {
+                modifiers[key] = this.createNumericModifier(value, key);
+            } else if (Array.isArray(value)) {
+                modifiers[key] = value.map(item => {
+                    if (typeof item !== 'number') {
+                        return null;
+                    }
+
+                    return this.createNumericModifier(item, key, {
+                        positive: this.arrayPositiveKeys.has(key),
+                        angle: this.arrayAngleKeys.has(key)
+                    });
+                });
+            }
+        }
+
+        return modifiers;
+    }
+
+    createNumericModifier(value, key, options = {}) {
+        const positive = options.positive ?? this.positiveKeys.has(key);
+        const angle = options.angle ?? this.angleKeys.has(key);
+        const smallRange = options.smallRange ?? this.smallRangeKeys.has(key);
+
+        let amplitudeBase;
+        if (angle) {
+            amplitudeBase = Math.PI;
+        } else if (smallRange) {
+            amplitudeBase = Math.max(Math.abs(value) * 5, 0.02);
+        } else {
+            amplitudeBase = Math.max(Math.abs(value), 0.5);
+        }
+
+        return {
+            base: value,
+            amplitudeBase,
+            intensity: this.random(0.15, 0.55),
+            secondaryIntensity: this.random(0.05, 0.25),
+            speed: this.random(0.18, 0.9),
+            secondarySpeed: this.random(0.05, 0.35),
+            phase: this.random(0, Math.PI * 2),
+            secondaryPhase: this.random(0, Math.PI * 2),
+            positive,
+            minValue: positive ? Math.max(amplitudeBase * 0.05, Math.abs(value) * 0.35, 0.001) : null
+        };
+    }
+
+    applyDynamicValue(modifier, time) {
+        if (!modifier) {
+            return null;
+        }
+
+        const primary = Math.sin(time * modifier.speed + modifier.phase) * modifier.intensity;
+        const secondary = Math.sin(time * modifier.secondarySpeed + modifier.secondaryPhase) * modifier.secondaryIntensity;
+
+        let value = modifier.base + modifier.amplitudeBase * (primary + secondary);
+
+        if (modifier.positive) {
+            value = Math.max(modifier.minValue, Math.abs(value));
+        }
+
+        return value;
+    }
+
+    getDynamicCurveParams(baseCurve, modifiers, time) {
+        const params = {
+            type: baseCurve.type,
+            name: baseCurve.name,
+            period: baseCurve.period
+        };
+
+        for (const [key, value] of Object.entries(baseCurve)) {
+            if (key === 'type' || key === 'name' || key === 'period') {
+                continue;
+            }
+
+            if (typeof value === 'number') {
+                const modifier = modifiers[key];
+                params[key] = modifier ? this.applyDynamicValue(modifier, time) : value;
+            } else if (Array.isArray(value)) {
+                const modifierList = modifiers[key];
+
+                if (modifierList) {
+                    params[key] = value.map((item, index) => {
+                        const modifier = modifierList[index];
+                        const dynamicValue = modifier ? this.applyDynamicValue(modifier, time) : item;
+                        if (this.arrayPositiveKeys.has(key)) {
+                            return Math.max(0.001, Math.abs(dynamicValue));
+                        }
+                        return dynamicValue;
+                    });
+                } else {
+                    params[key] = value.slice();
+                }
+            } else {
+                params[key] = value;
+            }
+        }
+
+        return params;
+    }
+
     getCurveRange(curve) {
         if (curve.type === 'polynomial') {
             return { min: -2, max: 2 };
@@ -226,54 +365,6 @@ class ParametricCurveGallery {
 
         const period = curve.period || Math.PI * 4;
         return { min: 0, max: period };
-    }
-
-    prepareCurve(curve) {
-        const steps = 600;
-        const range = this.getCurveRange(curve);
-        const points = [];
-        let minX = Infinity;
-        let maxX = -Infinity;
-        let minY = Infinity;
-        let maxY = -Infinity;
-
-        for (let i = 0; i <= steps; i++) {
-            const t = range.min + (i / steps) * (range.max - range.min);
-            const point = this.getParametricPoint(curve, t);
-            points.push(point);
-
-            if (point.x < minX) minX = point.x;
-            if (point.x > maxX) maxX = point.x;
-            if (point.y < minY) minY = point.y;
-            if (point.y > maxY) maxY = point.y;
-        }
-
-        const width = maxX - minX || 1;
-        const height = maxY - minY || 1;
-        const padding = 12;
-        const drawableSize = 150 - padding * 2;
-        const scale = drawableSize / Math.max(width, height, 1);
-        const centerX = minX + width / 2;
-        const centerY = minY + height / 2;
-
-        const normalizedPoints = points.map(point => ({
-            x: (point.x - centerX) * scale,
-            y: (point.y - centerY) * scale
-        }));
-
-        let rotationSpeed = this.random(-0.4, 0.4);
-        if (Math.abs(rotationSpeed) < 0.05) {
-            rotationSpeed = rotationSpeed < 0 ? -0.05 : 0.05;
-        }
-
-        return {
-            points: normalizedPoints,
-            rotation: this.random(0, Math.PI * 2),
-            rotationSpeed,
-            baseHue: this.random(0, 360),
-            hueSpeed: this.random(8, 18),
-            lineWidth: this.random(0.8, 1.6)
-        };
     }
 
     getParametricPoint(curve, t) {
@@ -333,10 +424,8 @@ class ParametricCurveGallery {
             case 'harmonograph':
                 const { f1, f2, f3, f4, p1, p2, p3, p4, d1, d2, d3, d4 } = curve;
                 return {
-                    x: curve.amplitude * (Math.exp(-d1 * t) * Math.sin(t * f1 + p1) +
-                                         Math.exp(-d2 * t) * Math.sin(t * f2 + p2)),
-                    y: curve.amplitude * (Math.exp(-d3 * t) * Math.sin(t * f3 + p3) +
-                                         Math.exp(-d4 * t) * Math.sin(t * f4 + p4))
+                    x: curve.amplitude * (Math.exp(-d1 * t) * Math.sin(t * f1 + p1) + Math.exp(-d2 * t) * Math.sin(t * f2 + p2)),
+                    y: curve.amplitude * (Math.exp(-d3 * t) * Math.sin(t * f3 + p3) + Math.exp(-d4 * t) * Math.sin(t * f4 + p4))
                 };
 
             case 'rose':
@@ -386,29 +475,71 @@ class ParametricCurveGallery {
         }
     }
 
-    drawCurve(curve, deltaSeconds, elapsedSeconds) {
-        const { ctx, canvas, points } = curve;
+    drawCurve(curve, _deltaSeconds, elapsedSeconds) {
+        const { ctx, canvas, baseCurve, modifiers, points } = curve;
         if (!points || points.length === 0) {
             return;
         }
 
-        curve.rotation += curve.rotationSpeed * deltaSeconds;
-        const hue = (curve.baseHue + elapsedSeconds * curve.hueSpeed) % 360;
+        const params = this.getDynamicCurveParams(baseCurve, modifiers, elapsedSeconds);
+
+        const range = this.getCurveRange(params);
+        const steps = points.length - 1;
+        const stepSize = (range.max - range.min) / steps;
+
+        let minX = Infinity;
+        let maxX = -Infinity;
+        let minY = Infinity;
+        let maxY = -Infinity;
+
+        for (let i = 0; i <= steps; i++) {
+            const t = range.min + stepSize * i;
+            const point = this.getParametricPoint(params, t);
+            const target = points[i];
+            target.x = point.x;
+            target.y = point.y;
+
+            if (point.x < minX) minX = point.x;
+            if (point.x > maxX) maxX = point.x;
+            if (point.y < minY) minY = point.y;
+            if (point.y > maxY) maxY = point.y;
+        }
+
+        const width = maxX - minX || 1;
+        const height = maxY - minY || 1;
+        const centerX = minX + width / 2;
+        const centerY = minY + height / 2;
+
+        const padding = Math.min(canvas.width, canvas.height) * this.paddingRatio;
+        const drawableWidth = canvas.width - padding * 2;
+        const drawableHeight = canvas.height - padding * 2;
+        const maxDimension = Math.max(width, height, 1);
+        const availableSpace = Math.max(1, Math.min(drawableWidth, drawableHeight));
+        const scale = availableSpace / maxDimension;
 
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.save();
         ctx.translate(canvas.width / 2, canvas.height / 2);
-        ctx.rotate(curve.rotation);
 
         ctx.beginPath();
-        ctx.moveTo(points[0].x, points[0].y);
-        for (let i = 1; i < points.length; i++) {
-            const point = points[i];
-            ctx.lineTo(point.x, point.y);
+        for (let i = 0; i <= steps; i++) {
+            const relativeX = (points[i].x - centerX) * scale;
+            const relativeY = (points[i].y - centerY) * scale;
+            if (i === 0) {
+                ctx.moveTo(relativeX, relativeY);
+            } else {
+                ctx.lineTo(relativeX, relativeY);
+            }
         }
 
-        ctx.strokeStyle = `hsl(${hue}, 70%, 55%)`;
-        ctx.lineWidth = curve.lineWidth;
+        const hue = (curve.baseHue + elapsedSeconds * curve.hueSpeed) % 360;
+        const lineWidth = Math.max(
+            0.35,
+            curve.lineWidthBase * (1 + curve.lineWidthVariation * Math.sin(elapsedSeconds * curve.lineWidthSpeed + curve.lineWidthPhase))
+        );
+
+        ctx.strokeStyle = `hsl(${Math.round(hue)}, 70%, 55%)`;
+        ctx.lineWidth = lineWidth;
         ctx.lineJoin = 'round';
         ctx.lineCap = 'round';
         ctx.stroke();
