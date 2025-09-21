@@ -80,7 +80,9 @@ class ParametricCurveGallery {
         this.arrayPositiveKeys = new Set(['freqs']);
         this.arrayAngleKeys = new Set(['phases']);
 
-        this.pointer = { x: 0, y: 0, active: false };
+        this.pointer = { x: 0, y: 0, active: false, intensity: 0 };
+        this.pointerFalloff = 1.35;
+
         this.tooltip = this.createTooltipElement();
 
         this.handlePointerMove = this.handlePointerMove.bind(this);
@@ -212,7 +214,207 @@ class ParametricCurveGallery {
         const title = meta.title || baseCurve.name || 'Parametric Curve';
         const discoverer = meta.discoverer ? `<em>${meta.discoverer}</em>` : '';
         const description = meta.description ? `<span>${meta.description}</span>` : '';
-        return `<strong>${title}</strong>${discoverer}${description}`;
+        const formula = this.buildCurveFormula(baseCurve);
+        const formulaBlock = formula ? `<code>${formula}</code>` : '';
+        return `<strong>${title}</strong>${discoverer}${description}${formulaBlock}`;
+    }
+
+    formatNumber(value, baseDecimals = 2) {
+        if (!Number.isFinite(value)) {
+            return '0';
+        }
+        const abs = Math.abs(value);
+        let decimals = baseDecimals;
+        if (abs >= 1000) {
+            decimals = 0;
+        } else if (abs >= 100) {
+            decimals = 1;
+        } else if (abs < 1) {
+            decimals = 3;
+        }
+        const fixed = value.toFixed(decimals);
+        const parsed = Number.parseFloat(fixed);
+        const normalized = Object.is(parsed, -0) ? 0 : parsed;
+        return normalized.toString();
+    }
+
+    buildPolynomialString(coeffs, startPower = 0, variable = 't') {
+        if (!Array.isArray(coeffs) || coeffs.length === 0) {
+            return '0';
+        }
+
+        const pieces = [];
+        coeffs.forEach((coeff, index) => {
+            if (!Number.isFinite(coeff) || Math.abs(coeff) < 0.0005) {
+                return;
+            }
+            const power = index + startPower;
+            const absCoeff = this.formatNumber(Math.abs(coeff));
+            let term;
+            if (power === 0) {
+                term = absCoeff;
+            } else if (power === 1) {
+                term = `${absCoeff}·${variable}`;
+            } else {
+                term = `${absCoeff}·${variable}^${power}`;
+            }
+            const sign = coeff >= 0 ? (pieces.length === 0 ? '' : ' + ') : (pieces.length === 0 ? '-' : ' - ');
+            pieces.push(`${sign}${term}`);
+        });
+
+        if (pieces.length === 0) {
+            return '0';
+        }
+
+        return pieces.join('');
+    }
+
+    buildCurveFormula(curve) {
+        if (!curve || !curve.type) {
+            return '';
+        }
+
+        switch (curve.type) {
+            case 'lissajous':
+                return `x(t) = ${this.formatNumber(curve.amplitude)}·sin(${this.formatNumber(curve.a)}t + ${this.formatNumber(curve.delta)})\n` +
+                    `y(t) = ${this.formatNumber(curve.amplitude)}·sin(${this.formatNumber(curve.b)}t)`;
+            case 'spirograph': {
+                const diff = this.formatNumber(curve.R - curve.r);
+                const ratio = this.formatNumber((curve.R - curve.r) / curve.r);
+                return `x(t) = ${diff}·cos(t) + ${this.formatNumber(curve.d)}·cos(${ratio}t)\n` +
+                    `y(t) = ${diff}·sin(t) - ${this.formatNumber(curve.d)}·sin(${ratio}t)`;
+            }
+            case 'lame':
+                return `|x / ${this.formatNumber(curve.a)}|^${this.formatNumber(curve.n)} + |y / ${this.formatNumber(curve.b)}|^${this.formatNumber(curve.n)} = 1`;
+            case 'polynomial': {
+                const xPoly = this.buildPolynomialString(curve.coeffs, 0);
+                const yPoly = this.buildPolynomialString(curve.coeffs, 1);
+                return `x(t) = ${this.formatNumber(curve.amplitude)}·cos(${xPoly})\n` +
+                    `y(t) = ${this.formatNumber(curve.amplitude)}·sin(${yPoly})`;
+            }
+            case 'trigSum': {
+                const cosComponents = curve.freqs
+                    .map((freq, index) => `cos(${this.formatNumber(freq)}t + ${this.formatNumber(curve.phases[index])})`)
+                    .join(' + ');
+                const sinComponents = curve.freqs
+                    .map((freq, index) => `sin(${this.formatNumber(freq)}t + ${this.formatNumber(curve.phases[index])})`)
+                    .join(' + ');
+                const divisor = curve.freqs.length;
+                return `x(t) = ${this.formatNumber(curve.amplitude)}·(${cosComponents}) / ${divisor}\n` +
+                    `y(t) = ${this.formatNumber(curve.amplitude)}·(${sinComponents}) / ${divisor}`;
+            }
+            case 'harmonograph':
+                return `x(t) = ${this.formatNumber(curve.amplitude)}·(e^{-${this.formatNumber(curve.d1)}t}·sin(${this.formatNumber(curve.f1)}t + ${this.formatNumber(curve.p1)}) + e^{-${this.formatNumber(curve.d2)}t}·sin(${this.formatNumber(curve.f2)}t + ${this.formatNumber(curve.p2)}))\n` +
+                    `y(t) = ${this.formatNumber(curve.amplitude)}·(e^{-${this.formatNumber(curve.d3)}t}·sin(${this.formatNumber(curve.f3)}t + ${this.formatNumber(curve.p3)}) + e^{-${this.formatNumber(curve.d4)}t}·sin(${this.formatNumber(curve.f4)}t + ${this.formatNumber(curve.p4)}))`;
+            case 'rose':
+                return `r(θ) = ${this.formatNumber(curve.amplitude)}·cos(${this.formatNumber(curve.n / curve.d)}θ)`;
+            case 'epitrochoid': {
+                const sum = this.formatNumber(curve.R + curve.r);
+                const ratio = this.formatNumber((curve.R + curve.r) / curve.r);
+                return `x(t) = ${sum}·cos(t) - ${this.formatNumber(curve.d)}·cos(${ratio}t)\n` +
+                    `y(t) = ${sum}·sin(t) - ${this.formatNumber(curve.d)}·sin(${ratio}t)`;
+            }
+            case 'butterfly':
+                return `r(t) = ${this.formatNumber(curve.amplitude)}·(e^{cos(t)} - 2·cos(4t) + sin^5(t / 12))`;
+            case 'cardioid':
+                return `r(t) = ${this.formatNumber(curve.a)}·(1 - cos t) + ${this.formatNumber(curve.b)}·sin(${this.formatNumber(curve.k)}t + ${this.formatNumber(curve.phase)})`;
+            case 'hypotrochoid': {
+                const diff = this.formatNumber(curve.R - curve.r);
+                const ratio = this.formatNumber((curve.R - curve.r) / curve.r);
+                return `x(t) = ${diff}·cos(t) + ${this.formatNumber(curve.d)}·cos(${ratio}t)\n` +
+                    `y(t) = ${diff}·sin(t) - ${this.formatNumber(curve.d)}·sin(${ratio}t)`;
+            }
+            case 'cycloid': {
+                const waveAmplitude = this.formatNumber(curve.waveAmplitude);
+                const waveFrequency = this.formatNumber(curve.waveFrequency);
+                const wavePhase = this.formatNumber(curve.wavePhase);
+                const waveY = this.formatNumber(curve.waveAmplitude * 0.4);
+                return `x(t) = ½·[${this.formatNumber(curve.r)}·(t - sin t) + (${this.formatNumber(curve.r + curve.d)})·t - ${this.formatNumber(curve.d)}·sin t] + ${waveAmplitude}·sin(${waveFrequency}t + ${wavePhase})\n` +
+                    `y(t) = ½·[${this.formatNumber(curve.r)}·(1 - cos t) + ${this.formatNumber(curve.r + curve.d)} - ${this.formatNumber(curve.d)}·cos t] + ${this.formatNumber(curve.verticalShift)} + ${waveY}·sin(${waveFrequency}t + ${wavePhase})`;
+            }
+            default:
+                return '';
+        }
+    }
+
+    calculatePointerInfluence(curve) {
+        if (!this.pointer.active || !curve || !curve.canvas) {
+            return 0;
+        }
+
+        const rect = curve.canvas.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) {
+            return 0;
+        }
+
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        const dx = this.pointer.x - centerX;
+        const dy = this.pointer.y - centerY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        const influenceRadius = Math.max(rect.width, rect.height) * 2.4;
+        if (influenceRadius <= 0) {
+            return 0;
+        }
+
+        const normalized = Math.min(1, distance / influenceRadius);
+        const falloff = Math.pow(1 - normalized, this.pointerFalloff);
+        return Math.max(0, falloff);
+    }
+
+    applyAmbientCellEffects(curve, pointerIntensity, hue) {
+        if (!curve || !curve.cell) {
+            return;
+        }
+
+        if (pointerIntensity > 0.01) {
+            const brightness = 1 + pointerIntensity * 0.75;
+            const saturation = 1 + pointerIntensity * 0.65;
+            curve.cell.style.filter = `brightness(${brightness.toFixed(3)}) saturate(${saturation.toFixed(3)})`;
+            curve.cell.style.boxShadow = `0 0 ${12 + pointerIntensity * 38}px rgba(${Math.round(80 + pointerIntensity * 90)}, ${Math.round(110 + pointerIntensity * 100)}, ${Math.round(255)}, ${0.12 + pointerIntensity * 0.35})`;
+            curve.cell.style.borderColor = `hsla(${Math.round(hue)}, 100%, ${Math.round(58 + pointerIntensity * 22)}%, ${0.25 + pointerIntensity * 0.35})`;
+        } else {
+            if (curve.cell.style.filter) {
+                curve.cell.style.filter = '';
+            }
+            if (curve.cell.style.boxShadow) {
+                curve.cell.style.boxShadow = '';
+            }
+            if (curve.cell.style.borderColor) {
+                curve.cell.style.borderColor = '';
+            }
+        }
+    }
+
+    renderHoldAura(ctx, curve, hue, pointerIntensity, elapsedSeconds) {
+        if (!curve || !curve.hold) {
+            return;
+        }
+
+        const intensity = Math.max(curve.hold.intensity || 0, pointerIntensity * 0.35);
+        if (intensity <= 0.01) {
+            return;
+        }
+
+        const width = curve.canvas.width;
+        const height = curve.canvas.height;
+        const x = (curve.hold.x || 0.5) * width - width / 2;
+        const y = (curve.hold.y || 0.5) * height - height / 2;
+        const pulse = curve.hold.active ? (0.55 + 0.45 * Math.sin((elapsedSeconds - curve.hold.start) * 4)) : 0;
+        const auraIntensity = Math.min(1, intensity + Math.max(0, pulse) * 0.35);
+        const radius = Math.max(width, height) * (0.28 + auraIntensity * 0.55);
+        const innerRadius = Math.max(10, radius * 0.18);
+
+        const gradient = ctx.createRadialGradient(x, y, innerRadius, x, y, radius);
+        gradient.addColorStop(0, `hsla(${Math.round(hue)}, 100%, ${Math.min(88, 78 + auraIntensity * 18)}%, ${0.25 + auraIntensity * 0.25})`);
+        gradient.addColorStop(0.55, `hsla(${Math.round((hue + 18) % 360)}, 90%, ${Math.min(70, 58 + auraIntensity * 18)}%, ${0.22 + auraIntensity * 0.2})`);
+        gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.fillStyle = gradient;
+        ctx.fillRect(-width / 2, -height / 2, width, height);
+        ctx.restore();
     }
 
     updateCurveInfo(curve) {
@@ -830,7 +1032,10 @@ class ParametricCurveGallery {
         const scale = availableSpace / maxDimension;
 
         ctx.globalCompositeOperation = 'source-over';
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.08)';
+        const previousHoldIntensity = curve.hold && Number.isFinite(curve.hold.intensity) ? curve.hold.intensity : 0;
+        const pointerIntensity = this.calculatePointerInfluence(curve);
+        const fadeAlpha = Math.max(0.035, 0.08 - pointerIntensity * 0.03 - previousHoldIntensity * 0.02);
+        ctx.fillStyle = `rgba(0, 0, 0, ${fadeAlpha})`;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
         ctx.save();
@@ -845,6 +1050,7 @@ class ParametricCurveGallery {
             }
         }
         const holdIntensity = curve.hold ? curve.hold.intensity : 0;
+        const combinedEnergy = 1 + pointerIntensity * 0.85 + holdIntensity * 0.65;
 
         ctx.beginPath();
         for (let i = 0; i <= steps; i++) {
@@ -858,24 +1064,30 @@ class ParametricCurveGallery {
         }
 
         const hue = (curve.baseHue + elapsedSeconds * curve.hueSpeed) % 360;
+        const lineOscillation = Math.sin(elapsedSeconds * curve.lineWidthSpeed + curve.lineWidthPhase);
         const lineWidth = Math.max(
-            0.35,
-            (curve.lineWidthBase + holdIntensity * 0.9) * (1 + curve.lineWidthVariation * Math.sin(elapsedSeconds * curve.lineWidthSpeed + curve.lineWidthPhase))
+            0.38,
+            (curve.lineWidthBase + holdIntensity * 0.9 + pointerIntensity * 0.75) * (1 + curve.lineWidthVariation * lineOscillation) * combinedEnergy
         );
 
-        const saturation = Math.min(100, 70 + holdIntensity * 24);
-        const lightness = Math.min(75, 54 + holdIntensity * 18);
+        const saturation = Math.min(100, 68 + holdIntensity * 24 + pointerIntensity * 32);
+        const lightness = Math.min(82, 52 + holdIntensity * 18 + pointerIntensity * 26);
 
         ctx.strokeStyle = `hsl(${Math.round(hue)}, ${Math.round(saturation)}%, ${Math.round(lightness)}%)`;
         ctx.lineWidth = lineWidth;
         ctx.lineJoin = 'round';
         ctx.lineCap = 'round';
-        ctx.shadowBlur = 6 + holdIntensity * 18;
-        ctx.shadowColor = `hsla(${Math.round(hue)}, 100%, ${Math.min(80, 60 + holdIntensity * 20)}%, ${0.18 + holdIntensity * 0.32})`;
+        const shadowBlur = 8 + holdIntensity * 18 + pointerIntensity * 24;
+        const shadowLightness = Math.min(85, 60 + holdIntensity * 20 + pointerIntensity * 22);
+        const shadowAlpha = Math.min(0.75, 0.18 + holdIntensity * 0.32 + pointerIntensity * 0.27);
+        ctx.shadowBlur = shadowBlur;
+        ctx.shadowColor = `hsla(${Math.round(hue)}, 100%, ${Math.round(shadowLightness)}%, ${shadowAlpha})`;
         ctx.stroke();
 
+        this.renderHoldAura(ctx, curve, hue, pointerIntensity, elapsedSeconds);
         this.renderEffects(ctx, curve, elapsedSeconds);
-        this.renderPointerGlow(ctx, curve, hue);
+        this.renderPointerGlow(ctx, curve, hue, pointerIntensity);
+        this.applyAmbientCellEffects(curve, Math.max(pointerIntensity, holdIntensity * 0.6), hue);
 
         ctx.restore();
     }
@@ -911,11 +1123,17 @@ class ParametricCurveGallery {
                 const alpha = (1 - eased) * effect.strength;
                 const x = effect.x * width - width / 2;
                 const y = effect.y * height - height / 2;
-                ctx.strokeStyle = `hsla(${Math.round(effect.hue)}, 100%, 70%, ${alpha})`;
-                ctx.lineWidth = 0.6 + (effect.lineWidthBoost || 1.2) * (1 - eased);
+                ctx.strokeStyle = `hsla(${Math.round(effect.hue)}, 100%, 72%, ${Math.min(0.95, alpha + 0.25)})`;
+                ctx.lineWidth = 0.8 + (effect.lineWidthBoost || 1.2) * (1 - eased) * 1.8;
                 ctx.beginPath();
                 ctx.arc(x, y, radius, 0, Math.PI * 2);
                 ctx.stroke();
+                const glow = ctx.createRadialGradient(x, y, Math.max(8, radius * 0.18), x, y, radius);
+                glow.addColorStop(0, `hsla(${Math.round(effect.hue)}, 100%, 82%, ${Math.min(0.6, alpha + 0.2)})`);
+                glow.addColorStop(0.65, `hsla(${Math.round((effect.hue + 15) % 360)}, 95%, 60%, ${Math.max(0, alpha - 0.1)})`);
+                glow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                ctx.fillStyle = glow;
+                ctx.fillRect(-width / 2, -height / 2, width, height);
             } else if (effect.type === 'burst') {
                 const eased = 1 - Math.pow(1 - clamped, 2);
                 const alpha = (1 - clamped) * effect.strength;
@@ -931,10 +1149,17 @@ class ParametricCurveGallery {
                     ctx.beginPath();
                     ctx.moveTo(x, y);
                     ctx.lineTo(x + Math.cos(angle) * spokeLength, y + Math.sin(angle) * spokeLength);
-                    ctx.strokeStyle = `hsla(${Math.round((effect.hue + i * 12) % 360)}, 90%, 65%, ${alpha})`;
-                    ctx.lineWidth = 0.4 + (effect.lineWidthBoost || 1) * (1 - clamped);
+                    ctx.strokeStyle = `hsla(${Math.round((effect.hue + i * 12) % 360)}, 95%, 70%, ${Math.min(0.9, alpha + 0.2)})`;
+                    ctx.lineWidth = 0.55 + (effect.lineWidthBoost || 1) * (1 - clamped) * 1.4;
                     ctx.stroke();
                 }
+                const coreRadius = Math.max(6, radius * 0.22);
+                const burstGlow = ctx.createRadialGradient(x, y, coreRadius * 0.5, x, y, coreRadius * 2.6);
+                burstGlow.addColorStop(0, `hsla(${Math.round(effect.hue)}, 100%, 88%, ${Math.min(0.7, alpha + 0.25)})`);
+                burstGlow.addColorStop(0.6, `hsla(${Math.round((effect.hue + 24) % 360)}, 95%, 62%, ${Math.max(0.1, alpha - 0.05)})`);
+                burstGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                ctx.fillStyle = burstGlow;
+                ctx.fillRect(-width / 2, -height / 2, width, height);
             }
 
             ctx.restore();
@@ -944,39 +1169,31 @@ class ParametricCurveGallery {
         curve.effects = nextEffects;
     }
 
-    renderPointerGlow(ctx, curve, hue) {
-        if (!this.pointer.active) {
+    renderPointerGlow(ctx, curve, hue, pointerIntensity) {
+        if (!this.pointer.active || pointerIntensity <= 0.01) {
             return;
         }
 
         const rect = curve.canvas.getBoundingClientRect();
-        if (
-            this.pointer.x < rect.left ||
-            this.pointer.x > rect.right ||
-            this.pointer.y < rect.top ||
-            this.pointer.y > rect.bottom
-        ) {
-            return;
-        }
-
         const width = curve.canvas.width;
         const height = curve.canvas.height;
         const localX = this.pointer.x - rect.left;
         const localY = this.pointer.y - rect.top;
         const centerX = localX - width / 2;
         const centerY = localY - height / 2;
-        const maxRadius = Math.max(width, height) * 0.65;
+        const maxRadius = Math.max(width, height) * (0.65 + pointerIntensity * 0.45);
+        const innerRadius = Math.max(12, maxRadius * (0.08 + pointerIntensity * 0.12));
 
         const gradient = ctx.createRadialGradient(
             centerX,
             centerY,
-            Math.max(12, maxRadius * 0.08),
+            innerRadius,
             centerX,
             centerY,
             maxRadius
         );
-        gradient.addColorStop(0, `hsla(${Math.round(hue)}, 100%, 75%, 0.7)`);
-        gradient.addColorStop(0.45, `hsla(${Math.round(hue)}, 90%, 45%, 0.26)`);
+        gradient.addColorStop(0, `hsla(${Math.round(hue)}, 100%, ${Math.min(90, 78 + pointerIntensity * 22)}%, ${0.5 + pointerIntensity * 0.35})`);
+        gradient.addColorStop(0.42 + pointerIntensity * 0.12, `hsla(${Math.round(hue)}, 95%, ${Math.min(70, 54 + pointerIntensity * 26)}%, ${0.18 + pointerIntensity * 0.22})`);
         gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
 
         ctx.save();
